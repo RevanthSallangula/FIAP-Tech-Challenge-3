@@ -1,11 +1,19 @@
 import pandas as pd
+import numpy as np
 import joblib
+
 from lightgbm import LGBMClassifier
-from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
+from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder, PowerTransformer, FunctionTransformer
+from sklearn.linear_model import LogisticRegression
+
+from pytorch_tabnet.tab_model import TabNetClassifier
+
 from src.config import RANDOM_SEED
 from src.models.transforms import cyclical_transform
+from src.models.stacked_model import StackedModel
+
 
 PARAMS = {
     'learning_rate': 0.050623168535997125,
@@ -35,29 +43,16 @@ CYCLICAL_FEATURES = [
 
 
 def train_and_save_model(train_file: str, model_out: str):
-    """    
-    Train a machine learning classification model using the processed training dataset 
-    and save the fitted model to disk.
-
-    Steps:
-        1. Load the processed training data from parquet file.
-        2. Split the dataset into features (X) and target (y).
-        3. Train the model with LGBMClassifier.
-        4. Persist the trained model to the specified output path.
-
-    Args:
-        train_path (str): Path to the processed training dataset.
-        model_out (str): Path where the trained model will be saved.
-
-    Returns:
-        str: The path to the saved model file.
-    """
 
     train = pd.read_parquet(train_file)
+
     X_train = train.drop(columns=['y'])
     y_train = train['y']
 
-    # Pipeline
+    # -----------------------------
+    # Step 1: Feature engineering
+    # -----------------------------
+
     cyclical_transformer = FunctionTransformer(cyclical_transform)
 
     preprocessor_transformer = ColumnTransformer(
@@ -69,6 +64,18 @@ def train_and_save_model(train_file: str, model_out: str):
         remainder='passthrough'
     )
 
+    preprocessing_pipeline = Pipeline([
+        ("cyclical", cyclical_transformer),
+        ("preprocessor", preprocessor_transformer),
+    ])
+
+    # Fit preprocessing
+    X_processed = preprocessing_pipeline.fit_transform(X_train)
+
+    # -----------------------------
+    # Step 2: Train LightGBM
+    # -----------------------------
+
     lgbm_model = LGBMClassifier(
         **PARAMS,
         random_state=RANDOM_SEED,
@@ -76,13 +83,49 @@ def train_and_save_model(train_file: str, model_out: str):
         verbose=-1,
     )
 
-    pipeline = Pipeline([
-        ("cyclical", cyclical_transformer),
-        ("preprocessor", preprocessor_transformer),
-        ("classifier", lgbm_model),
-    ])
+    lgbm_model.fit(X_processed, y_train)
 
-    pipeline.fit(X_train, y_train)
-    joblib.dump(pipeline, model_out)
+    p_lgbm = lgbm_model.predict_proba(X_processed)[:, 1]
+
+    # -----------------------------
+    # Step 3: Train TabNet
+    # -----------------------------
+
+    tabnet_model = TabNetClassifier(seed=RANDOM_SEED)
+
+    tabnet_model.fit(
+        X_processed,
+        y_train.values,
+        max_epochs=100,
+        patience=10,
+        batch_size=1024,
+        virtual_batch_size=128,
+    )
+
+    p_tabnet = tabnet_model.predict_proba(X_processed)[:, 1]
+
+    # -----------------------------
+    # Step 4: Train Meta Model
+    # -----------------------------
+
+    Z = np.column_stack((p_lgbm, p_tabnet))
+
+    meta_model = LogisticRegression(random_state=RANDOM_SEED)
+
+    meta_model.fit(Z, y_train)
+
+    # -----------------------------
+    # Step 5: Build Stacked Model
+    # -----------------------------
+
+    stacked_model = StackedModel(
+        preprocessor=preprocessing_pipeline,
+        lgbm_model=lgbm_model,
+        tabnet_model=tabnet_model,
+        meta_model=meta_model
+    )
+
+    # Save model
+    joblib.dump(stacked_model, model_out)
 
     return model_out

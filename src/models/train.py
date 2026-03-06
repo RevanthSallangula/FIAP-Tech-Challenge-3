@@ -18,12 +18,14 @@ from src.models.stacked_model import StackedModel
 
 PARAMS = {
     "learning_rate": 0.03,
-    "n_estimators": 800,
-    "max_depth": 8,
-    "num_leaves": 128,
-    "subsample": 0.8,
-    "colsample_bytree": 0.8,
-    "class_weight": "balanced"
+    "n_estimators": 1200,
+    "num_leaves": 256,
+    "max_depth": -1,
+    "subsample": 0.9,
+    "colsample_bytree": 0.9,
+    "min_child_samples": 20,
+    "class_weight": "balanced",
+    "random_state": RANDOM_SEED
 }
 
 
@@ -59,8 +61,8 @@ def train_and_save_model(train_file: str, model_out: str):
         X,
         y,
         test_size=0.2,
-        random_state=RANDOM_SEED,
-        stratify=y
+        stratify=y,
+        random_state=RANDOM_SEED
     )
 
     # --------------------------
@@ -86,15 +88,15 @@ def train_and_save_model(train_file: str, model_out: str):
     X_train_proc = preprocessing_pipeline.fit_transform(X_train)
     X_val_proc = preprocessing_pipeline.transform(X_val)
 
+    # convert to dense for TabNet
+    X_train_proc = np.array(X_train_proc)
+    X_val_proc = np.array(X_val_proc)
+
     # --------------------------
     # LightGBM
     # --------------------------
 
-    lgbm_model = LGBMClassifier(
-        **PARAMS,
-        random_state=RANDOM_SEED,
-        n_jobs=-1
-    )
+    lgbm_model = LGBMClassifier(**PARAMS)
 
     lgbm_model.fit(X_train_proc, y_train)
 
@@ -106,12 +108,25 @@ def train_and_save_model(train_file: str, model_out: str):
 
     tabnet_model = TabNetClassifier(seed=RANDOM_SEED)
 
+    # --------------------------
+    # PLACEHOLDER FOR SYNTHETIC DATA
+    # --------------------------
+    # Later you can augment the training set here:
+    #
+    # X_train_tabnet = np.vstack([X_train_proc, X_synthetic])
+    # y_train_tabnet = np.concatenate([y_train, y_synthetic])
+    #
+    # For now we keep it simple
+
+    X_train_tabnet = X_train_proc
+    y_train_tabnet = y_train.values
+
     tabnet_model.fit(
-        X_train_proc,
-        y_train.values,
+        X_train_tabnet,
+        y_train_tabnet,
         eval_set=[(X_val_proc, y_val.values)],
-        max_epochs=100,
-        patience=15,
+        max_epochs=80,
+        patience=10,
         batch_size=1024,
         virtual_batch_size=128
     )
@@ -119,10 +134,15 @@ def train_and_save_model(train_file: str, model_out: str):
     p_tabnet = tabnet_model.predict_proba(X_val_proc)[:,1]
 
     # --------------------------
-    # Meta features
+    # Meta features (stronger)
     # --------------------------
 
-    Z_val = np.column_stack((p_lgbm, p_tabnet))
+    Z_val = np.column_stack([
+        p_lgbm,
+        p_tabnet,
+        p_lgbm * p_tabnet,
+        p_lgbm - p_tabnet
+    ])
 
     # --------------------------
     # Meta learner
@@ -130,10 +150,27 @@ def train_and_save_model(train_file: str, model_out: str):
 
     meta_model = LogisticRegression(
         class_weight="balanced",
+        max_iter=1000,
         random_state=RANDOM_SEED
     )
 
     meta_model.fit(Z_val, y_val)
+
+    # --------------------------
+    # Refit base models on FULL dataset
+    # --------------------------
+
+    X_full_proc = preprocessing_pipeline.transform(X)
+    X_full_proc = np.array(X_full_proc)
+
+    lgbm_model.fit(X_full_proc, y)
+
+    tabnet_model.fit(
+        X_full_proc,
+        y.values,
+        max_epochs=50,
+        patience=10
+    )
 
     # --------------------------
     # Final stacked model

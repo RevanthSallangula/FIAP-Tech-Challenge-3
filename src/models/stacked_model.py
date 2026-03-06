@@ -1,5 +1,4 @@
 import numpy as np
-from pytorch_tabnet.tab_model import TabNetClassifier
 
 
 class StackedModel:
@@ -21,7 +20,10 @@ class StackedModel:
         """
         Apply preprocessing pipeline.
         """
-        return self.preprocessor.transform(X)
+        X_proc = self.preprocessor.transform(X)
+
+        # ensure dense matrix for TabNet
+        return np.array(X_proc)
 
     def _meta_features(self, X):
         """
@@ -32,7 +34,14 @@ class StackedModel:
         p_lgbm = self.lgbm_model.predict_proba(X_proc)[:, 1]
         p_tabnet = self.tabnet_model.predict_proba(X_proc)[:, 1]
 
-        Z = np.column_stack((p_lgbm, p_tabnet))
+        # expanded meta features
+        Z = np.column_stack([
+            p_lgbm,
+            p_tabnet,
+            p_lgbm * p_tabnet,
+            p_lgbm - p_tabnet
+        ])
+
         return Z
 
     def predict_proba(self, X):

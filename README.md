@@ -34,19 +34,23 @@ git clone https://github.com/luuisotorres/FIAP-Tech-Challenge-3.git
 cd FIAP-Tech-Challenge-3
 
 # 2. Install dependencies and set up the environment
-uv sync
+python -m uv sync
 cp .env.example .env
 
 # 3. Run the data and training pipelines
-uv run -m scripts.make_dataset
-uv run -m scripts.train_model
+python -m uv run -m scripts.make_dataset
+python -m uv run -m scripts.train_model
+python -m uv run -m scripts.evaluate_model
+python -m uv run -m scripts.marketing_insights
+python -m uv run -m scripts.visualize_results
+
 
 # 4. Launch the API and Streamlit app in separate terminals
 # Terminal 1:
-uv run uvicorn src.app.api:app --reload
+python -m uv run uvicorn src.app.api:app --reload
 
 # Terminal 2:
-uv run -m streamlit run frontend/streamlit_app.py
+python -m uv run -m streamlit run frontend/streamlit_app.py
 ```
 
 

@@ -25,10 +25,10 @@ poutcome_options = [poutcome.value for poutcome in PoutcomeEnum]
 # Streamlit start
 st.title("📊 Lead Conversion Prediction")
 st.write("Welcome to the Lead Conversion Prediction app!")
-st.write("This app predicts whether a customer will subscribe to a term deposit based on their information.")
-st.write("Fill in the customer information in the sidebar and click the button to get a prediction.")
+st.write("This app predicts whether a person will take out a bank loan based on their information.")
+st.write("Fill in the user information in the sidebar and click the button to get a prediction.")
 
-st.sidebar.header("Customer Information")
+st.sidebar.header("User Information")
 age = st.sidebar.number_input("Age", min_value=18, max_value=100)
 job = st.sidebar.selectbox("Job", job_options)
 marital = st.sidebar.selectbox("Marital Status", marital_options)
